@@ -1,0 +1,11 @@
+[package]
+name = "downer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "signal"] }
+tokio-util = { version = "0.7" }
+futures-util = "0.3"
