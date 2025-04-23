@@ -1,5 +1,6 @@
 #[derive(Debug)]
 pub enum Error {
+    DirectoryNotFound(String),
     RequestFailed(reqwest::Error),
     IO(std::io::Error),
     InvalidHeaderValue(reqwest::header::InvalidHeaderValue),

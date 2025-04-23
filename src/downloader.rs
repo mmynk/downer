@@ -63,7 +63,24 @@ impl Downloader {
     }
 
     pub async fn download(&self) -> Result<(), Error> {
-        download_file(&self.url, &self.output_path, self.token.clone(), &self.client).await
+        // Check if output_path is a path to a file or a directory
+        let path = Path::new(&self.output_path);
+
+        // If path has a parent directory, ensure it exists
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                return Err(Error::DirectoryNotFound(parent.display().to_string()));
+            }
+        }
+
+        // If output_path is a directory, append the filename from URL
+        let final_output_path = if path.exists() && path.is_dir() {
+            let file_name = file_name_from_url(&self.url);
+            path.join(file_name).to_string_lossy().to_string()
+        } else {
+            self.output_path.clone()
+        };
+        download_file(&self.url, &final_output_path, self.token.clone(), &self.client).await
     }
 }
 
