@@ -217,7 +217,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "downer"
+name = "dwny"
 version = "0.1.0"
 dependencies = [
  "clap",

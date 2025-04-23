@@ -1,4 +1,4 @@
-# downer
+# dwny
 
 A simple CLI tool to download files from the internet. Supports resuming interrupted downloads.
 
@@ -11,7 +11,7 @@ cargo install --path .
 ## Usage
 
 ```bash
-downer -u <url> [-o output]
+dwny -u <url> [-o output]
 ```
 
 ## Features
