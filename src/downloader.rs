@@ -8,6 +8,25 @@ use log::debug;
 
 use crate::errors::Error;
 
+#[derive(Clone, Debug)]
+pub struct Download {
+    file_name: String,
+    output_path: String,
+    downloaded_size: u64,
+    total_size: u64,
+}
+
+impl Download {
+    pub fn new(output_path: &str) -> Self {
+        Self {
+            file_name: file_name_from_url(output_path).to_string(),
+            output_path: output_path.to_string(),
+            downloaded_size: 0,
+            total_size: 0,
+        }
+    }
+}
+
 pub struct Downloader {
     url: String,
     output_path: String,
@@ -53,9 +72,12 @@ fn file_name_from_url(url: &str) -> &str {
 }
 
 async fn download_file(url: &str, output_path: &str, token: sync::CancellationToken, client: &Client) -> Result<(), Error> {
+    let mut download = Download::new(output_path);
     if !Path::new(output_path).exists() {
         debug!("Downloading url={} to path={}", url, output_path);
-        return start_download(url, output_path, token, client).await;
+        let response = client.get(url).send().await?;
+        download.total_size = get_file_size(&response).await;
+        return start_download(response, &mut download, token).await;
     }
 
     let file = File::open(output_path)?;
@@ -73,80 +95,67 @@ async fn download_file(url: &str, output_path: &str, token: sync::CancellationTo
         return Ok(());
     }
 
+    download.downloaded_size = file_size;
+    download.total_size = total_bytes;
+
     if file_size > total_bytes || file_size == 0 {
         debug!("File size={} is greater than the total bytes={} or 0, starting download from scratch for url={} to path={}", file_size, total_bytes, url, output_path);
-        return start_download(url, output_path, token, client).await;
+        return start_download(response, &mut download, token).await;
     }
 
     debug!("Continuing download for url={} to path={}", url, output_path);
-    return continue_download(url, output_path, token, client).await;
+    return continue_download(response, &mut download, token).await;
 }
 
-async fn start_download(url: &str, output_path: &str, token: sync::CancellationToken, client: &Client) -> Result<(), Error> {
-    let response = client.get(url).send().await?;
-    let total_bytes = get_file_size(&response).await;
-    let mut out = File::create(output_path)?;
+async fn start_download(response: Response, download: &mut Download, token: sync::CancellationToken) -> Result<(), Error> {
+    let mut out = File::create(download.output_path.clone())?;
     let mut stream = response.bytes_stream();
 
-    let file_name = output_path.split('/').last().unwrap_or(output_path);
-    debug!("Downloading {}: total={}", file_name, pretty_size(total_bytes));
-    let mut downloaded_bytes = 0;
+    debug!("Downloading {}: total={}", download.file_name, pretty_size(download.total_size));
     while let Some(chunk) = stream.next().await {
         if token.is_cancelled() {
             break;
         }
         let chunk = chunk?;
         out.write_all(&chunk)?;
-        downloaded_bytes += chunk.len() as u64;
-        update_progress(file_name, downloaded_bytes, total_bytes).await;
+        download.downloaded_size += chunk.len() as u64;
+        update_progress(download).await;
     }
     println!();
 
     Ok(())
 }
 
-async fn continue_download(url: &str, output_path: &str, token: sync::CancellationToken, client: &Client) -> Result<(), Error> {
-    let file = File::open(output_path)?;
-    let file_size = file.metadata()?.len();
-    let mut headers = header::HeaderMap::new();
-    headers.insert(
-        "Range",
-        header::HeaderValue::from_str(&format!("bytes={}-", file_size)).map_err(Error::InvalidHeaderValue)?,
-    );
-    let response = client.get(url).headers(headers).send().await?;
-    let total_bytes = get_file_size(&response).await + file_size;
-
+async fn continue_download(response: Response, download: &mut Download, token: sync::CancellationToken) -> Result<(), Error> {
     let mut stream = response.bytes_stream();
-    let mut file = OpenOptions::new().append(true).open(output_path)?;
+    let mut file = OpenOptions::new().append(true).open(download.output_path.clone())?;
 
-    let file_name = output_path.split('/').last().unwrap_or(output_path);
-    let mut downloaded_bytes = file_size;
-    debug!("Downloading {}: remaining={} total={}", file_name, pretty_size(total_bytes - downloaded_bytes), pretty_size(total_bytes));
+    debug!("Downloading {}: remaining={} total={}", download.file_name, pretty_size(download.total_size - download.downloaded_size), pretty_size(download.total_size));
     while let Some(chunk) = stream.next().await {
         if token.is_cancelled() {
             break;
         }
         let chunk = chunk?;
         file.write_all(&chunk)?;
-        downloaded_bytes += chunk.len() as u64;
-        update_progress(file_name, downloaded_bytes, total_bytes).await;
+        download.downloaded_size += chunk.len() as u64;
+        update_progress(&download).await;
     }
 
     Ok(())
 }
 
-async fn update_progress(file_name: &str, downloaded_bytes: u64, total_bytes: u64) {
-    if total_bytes == 0 {
-        println!("\r{}: {} bytes / unknown size", file_name, downloaded_bytes);
+async fn update_progress(download: &Download) {
+    if download.total_size == 0 {
+        println!("\r{}: {} bytes / unknown size", download.file_name, download.downloaded_size);
         return;
     }
-    let progress = (downloaded_bytes as f64 / total_bytes as f64) * 100.0;
+    let progress = (download.downloaded_size as f64 / download.total_size as f64) * 100.0;
     let bar_width = 30;
     let filled_width = (progress / 100.0 * bar_width as f64) as usize;
     let empty_width = bar_width - filled_width;
 
     print!("\r{}: [{}{:>width$}] {:.2}%",
-        file_name,
+        download.file_name,
         "█".repeat(filled_width),
         "",
         progress,
